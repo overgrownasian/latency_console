@@ -1,0 +1,783 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Latency Console</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  /* === Theme Variables === */
+  :root[data-theme="dark"] {
+    --bg: #0b0f14;
+    --panel: rgba(18, 24, 31, 0.68);
+    --panel-border: rgba(116, 185, 255, 0.12);
+    --txt: #e6f0ff;
+    --muted: #9ab0c2;
+    --accent: #6ee7ff;
+    --accent-2: #a78bfa;
+    --green: #00e58b;
+    --yellow: #ffd166;
+    --red: #ff6b6b;
+    --grid: #243445;
+    --row-good: rgba(0, 229, 139, 0.10);
+    --row-warn: rgba(255, 209, 102, 0.10);
+    --row-bad:  rgba(255, 107, 107, 0.10);
+  }
+  :root[data-theme="light"] {
+    --bg: #f7fafc;
+    --panel: rgba(255,255,255,0.9);
+    --panel-border: rgba(27, 107, 247, 0.12);
+    --txt: #0b0f14;
+    --muted: #4b5a6a;
+    --accent: #2563eb;
+    --accent-2: #7c3aed;
+    --green: #15803d;
+    --yellow: #a16207;
+    --red: #b91c1c;
+    --grid: #e5edf5;
+    --row-good: rgba(34,197,94,0.14);
+    --row-warn: rgba(250,204,21,0.14);
+    --row-bad:  rgba(239,68,68,0.14);
+  }
+  :root { --good: 500; --warn: 1000; }
+
+  /* === Base === */
+  body {
+    min-height: 100dvh; margin: 0; background: var(--bg); color: var(--txt);
+    font: 500 14px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+  }
+  .container { max-width: 1100px; margin: 32px auto; padding: 0 20px; }
+  .title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  h1 { margin: 0; font-size: 22px; font-weight: 700; }
+  .badge { font-size: 12px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--panel-border); color: var(--muted); }
+  .toggle-theme {
+    padding: 6px 10px; border-radius: 8px; border: 1px solid var(--panel-border);
+    background: var(--panel); color: var(--txt); cursor: pointer; font-size: 14px;
+  }
+
+  /* === Panel === */
+  .panel { margin-top: 14px; background: var(--panel); border: 1px solid var(--panel-border); border-radius: 16px; overflow: hidden; }
+  .controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--panel-border); }
+  label { color: var(--muted); display: flex; align-items: center; gap: 6px; font-size: 13px; }
+  input[type="number"] { width: 84px; padding: 6px; border-radius: 8px; border: 1px solid var(--panel-border); background: var(--bg); color: var(--txt); }
+  .buttons { margin-left: auto; display: flex; gap: 10px; }
+  button { padding: 7px 11px; border-radius: 8px; border: 1px solid var(--panel-border); background: var(--panel); color: var(--txt); cursor: pointer; }
+  button:disabled { opacity: .55; cursor: not-allowed; }
+  #stamp { padding: 10px 16px; color: var(--muted); font-size: 13px; }
+
+  /* === Table === */
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    font-size: 12px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted);
+    padding: 10px 14px; border-bottom: 1px solid var(--panel-border); text-align: left;
+  }
+  tbody td { padding: 10px 14px; border-bottom: 1px solid var(--panel-border); font-variant-numeric: tabular-nums; }
+  tbody tr.good { background: var(--row-good); }
+  tbody tr.warn { background: var(--row-warn); }
+  tbody tr.bad  { background: var(--row-bad); }
+  .dot { width: 8px; height: 8px; border-radius: 999px; display:inline-block; margin-right:8px; }
+  .spark { width: 120px; height: 28px; display:block; }
+  .mini { font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="title">
+    <div><h1>Latency Console</h1><span class="badge">client-side diagnostics</span></div>
+    
+    <button class="toggle-theme" id="themeToggle">🌙</button>
+  </div>
+
+  <div class="panel">
+    <div class="controls">
+      <label>Good ≤ <input id="goodMs" type="number" min="1" value="500"> ms</label>
+      <label>Warn ≤ <input id="warnMs" type="number" min="1" value="1000"> ms</label>
+      <div class="buttons">
+        <button id="startBtn">Start</button>
+        <button id="stopBtn" disabled>Stop</button>
+        <button id="exportBtn">Export CSV (All)</button>
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Service</th><th>Last</th><th>Avg</th><th>Min</th><th>Max</th>
+          <th>Jitter</th><th>Samples</th><th>Graph</th><th>Report</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+
+    <div id="stamp">Last updated: —</div>
+  </div>
+</div>
+<div style="text-align: center">Warning: Be sure to keep this page visible while testing connectivity or else the data will be incorrect</div>
+
+<!-- ===== Sparkline Modal (added) ===== -->
+<!-- ===== Sparkline Modal (with controls) ===== -->
+<div id="sparkModal" style="
+  display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75);
+  z-index:1000; align-items:center; justify-content:center;
+">
+  <div style="
+    position:relative;
+    background:var(--panel); border:1px solid var(--panel-border);
+    border-radius:12px; padding:16px; max-width:90%; max-height:90%;
+    display:flex; flex-direction:column; gap:12px;
+  ">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+      <h2 id="modalTitle" style="margin:0; font-size:16px; color:var(--txt);"></h2>
+      <div style="display:flex; gap:8px;">
+        <button id="resetZoom" style="padding:6px 12px; border-radius:8px; border:1px solid var(--panel-border); background:var(--panel); color:var(--txt); cursor:pointer;">Reset Zoom</button>
+        <button id="closeModal" style="padding:6px 12px; border-radius:8px; border:1px solid var(--panel-border); background:var(--panel); color:var(--txt); cursor:pointer;">Close</button>
+      </div>
+    </div>
+
+    <div style="position:relative; overflow:hidden;">
+      <canvas id="modalCanvas" style="width:900px; height:340px; max-width:100%;"></canvas>
+      <!-- Tooltip -->
+      <div id="modalTip" style="
+        position:absolute; pointer-events:none; padding:6px 8px; font-size:12px;
+        background:rgba(0,0,0,0.75); color:#fff; border:1px solid rgba(255,255,255,0.2);
+        border-radius:6px; transform:translate(-50%,-120%); display:none; white-space:nowrap;
+        backdrop-filter: blur(2px);
+      "></div>
+    </div>
+  </div>
+</div>
+<!-- ===== End Sparkline Modal ===== -->
+
+
+<script>
+/* ================== Config ================== */
+const TARGETS_URL = "targets.json";   // path to your JSON file
+const MAX_SAMPLES = 50;
+const INTERVAL_MS = 4000;             // probe every 4s
+const TIMEOUT_MS  = 8000;             // mark timeout after 8s
+const RELOAD_MS   = 60000;            // reload targets.json every 60s
+
+/* ================== State ================== */
+const state = {};                     // keyed by URL: { name, url, samples[], last }
+let targets = [];                     // [{ name, url }, ...] — live list
+let timer = null;                     // probe interval
+let reloadTimer = null;               // targets reload interval
+
+const root = document.documentElement;
+const tbody = document.getElementById('tbody');
+const themeToggle = document.getElementById('themeToggle');
+
+/* ===== Modal refs ===== */
+const modal = document.getElementById('sparkModal');
+const modalCanvas = document.getElementById('modalCanvas');
+const modalTitle = document.getElementById('modalTitle');
+const closeModalBtn = document.getElementById('closeModal');
+const resetZoomBtn = document.getElementById('resetZoom');
+const modalTip = document.getElementById('modalTip');
+
+/* ===== Modal state for zoom/pan/hover ===== */
+const modalState = {
+  url: null,
+  samples: [],
+  good: 500,
+  warn: 1000,
+  startIdx: 0,    // inclusive sample index
+  endIdx: 1,      // inclusive sample index
+  hoverIdx: null  // hovered sample index in full series
+};
+
+/* ================== Theme toggle ================== */
+function setTheme(mode){
+  root.setAttribute('data-theme', mode);
+  themeToggle.textContent = mode === "dark" ? "🌙" : "☀️";
+  localStorage.setItem('theme', mode);
+
+  // Wait a tick so getComputedStyle sees the new --accent etc.
+  requestAnimationFrame(() => {
+    requestAnimationFrame(redrawAllSparklines);
+  });
+}
+themeToggle.addEventListener('click', () => {
+  setTheme(root.getAttribute('data-theme') === "dark" ? "light" : "dark");
+});
+setTheme(localStorage.getItem('theme') || "dark");
+
+/* ================== Targets loading ================== */
+async function fetchTargetsJson() {
+  const url = `${TARGETS_URL}?v=${Date.now()}`; // cache-bust
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Failed to load ${TARGETS_URL}: ${res.status}`);
+  const data = await res.json();
+  if (!Array.isArray(data)) throw new Error("targets.json must be an array");
+  // normalize: only keep name+url strings
+  return data
+    .filter(x => x && typeof x.url === 'string' && typeof x.name === 'string')
+    .map(x => ({ name: x.name, url: x.url }));
+}
+
+function reconcileTargets(newTargets) {
+  const newByUrl = new Map(newTargets.map(t => [t.url, t]));
+  const oldByUrl = new Map(targets.map(t => [t.url, t]));
+
+  // Add rows for new URLs
+  for (const [url, t] of newByUrl) {
+    if (!oldByUrl.has(url)) addRow(t);
+    // update name if it changed
+    if (state[url] && state[url].name !== t.name) {
+      state[url].name = t.name;
+      const tr = tbody.querySelector(`tr[data-url="${css(url)}"]`);
+      if (tr) tr.querySelector('.svc-name').textContent = t.name;
+    }
+  }
+
+  // Remove rows for URLs that disappeared
+  for (const [url] of oldByUrl) {
+    if (!newByUrl.has(url)) removeRow(url);
+  }
+
+  // Replace live array
+  targets = newTargets.slice();
+}
+
+function addRow(t) {
+  // create state if missing
+  if (!state[t.url]) state[t.url] = { name: t.name, url: t.url, samples: [], last: null };
+
+  const tr = document.createElement('tr');
+  tr.dataset.url = t.url;
+  tr.innerHTML = `
+    <td><span class="dot"></span><span class="svc-name">${escapeHtml(t.name)}</span></td>
+    <td class="last">—</td>
+    <td class="avg mini">—</td>
+    <td class="min mini">—</td>
+    <td class="max mini">—</td>
+    <td class="jitter mini">—</td>
+    <td class="count mini">0</td>
+    <td><canvas class="spark"></canvas></td>
+    <td><button class="exportOneBtn">Export</button></td>
+  `;
+  tbody.appendChild(tr);
+}
+
+function removeRow(url) {
+  // remove DOM row
+  const tr = tbody.querySelector(`tr[data-url="${css(url)}"]`);
+  if (tr) tr.remove();
+  // keep past state? You can delete if you prefer:
+  // delete state[url];
+}
+
+/* ================== Init & events ================== */
+document.getElementById('startBtn').onclick = start;
+document.getElementById('stopBtn').onclick  = stop;
+document.getElementById('exportBtn').onclick = exportCSVAll;
+
+/* === Row-level interactions: Export + Sparkline click (updated) === */
+/* === Open modal when a small sparkline is clicked (keeps your existing tbody listener) === */
+tbody.addEventListener('click', (e) => {
+  if (e.target.classList.contains('exportOneBtn')) {
+    const url = e.target.closest('tr')?.dataset.url;
+    if (url) exportCSVOne(url);
+    return;
+  }
+  if (e.target.tagName === 'CANVAS' && e.target.classList.contains('spark')) {
+    const tr = e.target.closest('tr');
+    const url = tr?.dataset.url;
+    const s = state[url];
+    if (!s) return;
+
+    // seed modal state
+    modalState.url = url;
+    modalState.samples = s.samples;
+    const { good, warn } = getThresholds();
+    modalState.good = good; modalState.warn = warn;
+    modalState.startIdx = 0;
+    modalState.endIdx = Math.max(1, s.samples.length - 1);
+    modalState.hoverIdx = null;
+
+    modalTitle.textContent = s.name;
+    modal.style.display = 'flex';
+    renderModalChart();
+  }
+});
+
+/* === Modal close/reset === */
+closeModalBtn.onclick = () => { modal.style.display = 'none'; };
+modal.onclick = (e) => { if (e.target === modal) modal.style.display = 'none'; };
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape') modal.style.display = 'none'; });
+resetZoomBtn.onclick = () => {
+  modalState.startIdx = 0;
+  modalState.endIdx = Math.max(1, (modalState.samples?.length || 0) - 1);
+  renderModalChart();
+};
+
+
+/* === Zoom & Pan interactions on the big canvas === */
+(function attachModalCanvasInteractions(){
+  let isPanning = false;
+  let panStartX = 0;
+  let panStartRange = null;
+
+  modalCanvas.addEventListener('wheel', (e) => {
+    if (!modalState.samples || modalState.samples.length < 2) return;
+    e.preventDefault();
+
+    const rect = modalCanvas.getBoundingClientRect();
+    const w = rect.width;
+    const x = e.clientX - rect.left; // css pixels
+    const focusRatio = Math.max(0, Math.min(1, x / Math.max(1, w)));
+
+    const n = modalState.samples.length;
+    const span = Math.max(1, modalState.endIdx - modalState.startIdx);
+    const center = modalState.startIdx + span * focusRatio;
+
+    // zoom factor
+    const factor = (e.deltaY > 0) ? 1.2 : 0.8;
+    let newSpan = Math.max(10, Math.min(n - 1, Math.round(span * factor)));
+
+    let newStart = Math.round(center - newSpan * focusRatio);
+    let newEnd = newStart + newSpan;
+    // clamp to [0, n-1]
+    if (newStart < 0) { newEnd -= newStart; newStart = 0; }
+    if (newEnd > n - 1) { newStart -= (newEnd - (n - 1)); newEnd = n - 1; }
+    newStart = Math.max(0, newStart);
+    newEnd = Math.max(newStart + 1, newEnd);
+
+    modalState.startIdx = newStart;
+    modalState.endIdx = newEnd;
+    renderModalChart();
+  }, { passive: false });
+
+  modalCanvas.addEventListener('mousedown', (e) => {
+    if (!modalState.samples || modalState.samples.length < 2) return;
+    isPanning = true;
+    panStartX = e.clientX;
+    panStartRange = { start: modalState.startIdx, end: modalState.endIdx };
+  });
+  window.addEventListener('mouseup', () => { isPanning = false; });
+  window.addEventListener('mousemove', (e) => {
+    if (!modalState.samples || modalState.samples.length < 2) return;
+
+    const rect = modalCanvas.getBoundingClientRect();
+    const w = rect.width;
+    const x = e.clientX - rect.left;
+    const n = modalState.samples.length;
+    const span = Math.max(1, modalState.endIdx - modalState.startIdx);
+
+    /* Hover index for tooltip/crosshair */
+    const ratio = Math.max(0, Math.min(1, x / Math.max(1, w)));
+    let idx = Math.round(modalState.startIdx + ratio * span);
+    idx = Math.max(modalState.startIdx, Math.min(modalState.endIdx, idx));
+    modalState.hoverIdx = idx;
+    renderModalChart(e.clientX, e.clientY);
+
+    /* Pan if dragging */
+    if (isPanning) {
+      const dx = e.clientX - panStartX;          // pixels
+      const samplePerPx = span / Math.max(1, w); // samples per pixel
+      const shift = Math.round(dx * samplePerPx);
+      let newStart = panStartRange.start - shift;
+      let newEnd = panStartRange.end - shift;
+
+      if (newStart < 0) { newEnd -= newStart; newStart = 0; }
+      if (newEnd > n - 1) { newStart -= (newEnd - (n - 1)); newEnd = n - 1; }
+      newStart = Math.max(0, newStart);
+      newEnd = Math.max(newStart + 1, newEnd);
+
+      modalState.startIdx = newStart;
+      modalState.endIdx = newEnd;
+      // note: render is already called above for hover
+    }
+  });
+})();
+
+
+/* === Redraw on resize (keeps it crisp) === */
+window.addEventListener('resize', () => {
+  if (modal.style.display !== 'none') renderModalChart();
+});
+
+/* === Render the big chart with hover, crosshair, zoom range === */
+function renderModalChart(mouseClientX=null, mouseClientY=null) {
+  drawLargeSparkline(modalCanvas, modalState.samples, { good: modalState.good, warn: modalState.warn }, {
+    startIdx: modalState.startIdx,
+    endIdx: modalState.endIdx,
+    hoverIdx: modalState.hoverIdx
+  });
+
+  // Tooltip handling
+  if (modalState.hoverIdx != null && modalState.samples && modalState.samples[modalState.hoverIdx]) {
+    const s = modalState.samples[modalState.hoverIdx];
+    const ms = Number.isFinite(s.ms) ? `${s.ms} ms` : 'timeout';
+    const ts = new Date(s.ts).toLocaleString();
+    modalTip.textContent = `${ts} • ${ms}`;
+    modalTip.style.display = 'block';
+
+    // Position near mouse (if coords are provided)
+    if (mouseClientX != null && mouseClientY != null) {
+      const rect = modalCanvas.getBoundingClientRect();
+      const tipX = mouseClientX - rect.left;
+      const tipY = mouseClientY - rect.top;
+      modalTip.style.left = `${Math.max(8, Math.min(rect.width - 8, tipX))}px`;
+      modalTip.style.top  = `${Math.max(8, Math.min(rect.height - 8, tipY))}px`;
+    }
+  } else {
+    modalTip.style.display = 'none';
+  }
+}
+/* === Big sparkline with zoom/pan + crosshair (REPLACE your drawLargeSparkline) === */
+function drawLargeSparkline(canvas, samples, { good, warn }, opts = {}) {
+  const { startIdx = 0, endIdx = Math.max(1, (samples?.length || 0) - 1), hoverIdx = null } = opts;
+
+  if (!canvas) return;
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  const cssW = canvas.clientWidth || 900;
+  const cssH = canvas.clientHeight || 340;
+  canvas.width = Math.floor(cssW * dpr);
+  canvas.height = Math.floor(cssH * dpr);
+  const ctx = canvas.getContext('2d', { alpha: true });
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const w = cssW, h = cssH;
+  ctx.clearRect(0, 0, w, h);
+
+  // Visible slice + vertical scale
+  const slice = samples.slice(startIdx, endIdx + 1);
+  const finite = slice.map(s => s.ms).filter(Number.isFinite);
+  const maxSample = finite.length ? Math.max(...finite) : 0;
+  const maxY = Math.max(warn, maxSample * 1.10 || warn); // ensure warn band always visible
+  const yFor = (ms) => !Number.isFinite(ms) ? 0 : h - (Math.min(maxY, ms) / maxY) * h;
+
+  // Background bands
+  const yGood = yFor(good), yWarn = yFor(warn);
+  ctx.fillStyle = 'rgba(255,107,107,0.16)'; ctx.fillRect(0, 0, w, yWarn);
+  ctx.fillStyle = 'rgba(255,209,102,0.16)'; ctx.fillRect(0, yWarn, w, Math.max(0, yGood - yWarn));
+  ctx.fillStyle = 'rgba(0,229,139,0.16)';   ctx.fillRect(0, yGood, w, h - yGood);
+
+  // Threshold lines
+  ctx.strokeStyle = 'rgba(255,255,255,0.28)'; ctx.setLineDash([6,4]);
+  ctx.beginPath(); ctx.moveTo(0, yGood); ctx.lineTo(w, yGood); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, yWarn); ctx.lineTo(w, yWarn); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Data line
+  const span = Math.max(1, endIdx - startIdx);
+  if (slice.length) {
+    ctx.beginPath();
+    for (let i = 0; i < slice.length; i++) {
+      const x = (i / span) * w;
+      const y = yFor(slice[i].ms);
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--accent') || '#6ee7ff';
+    ctx.lineWidth = 2.2;
+    ctx.shadowColor = 'rgba(110,231,255,0.30)';
+    ctx.shadowBlur = 6;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+
+  // Crosshair/point highlight
+  if (hoverIdx != null && hoverIdx >= startIdx && hoverIdx <= endIdx) {
+    const i = hoverIdx - startIdx;
+    const x = (i / span) * w;
+    const y = yFor(samples[hoverIdx].ms);
+
+    ctx.save();
+    ctx.setLineDash([4,4]);
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 1;
+    // vertical
+    ctx.beginPath(); ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, h); ctx.stroke();
+    // horizontal only if latency is finite
+    if (Number.isFinite(samples[hoverIdx].ms)) {
+      ctx.beginPath(); ctx.moveTo(0, y + 0.5); ctx.lineTo(w, y + 0.5); ctx.stroke();
+    }
+    ctx.restore();
+
+    if (Number.isFinite(samples[hoverIdx].ms)) {
+      ctx.beginPath();
+      ctx.arc(x, y, 3, 0, Math.PI * 2);
+      ctx.fillStyle = '#fff';
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--accent') || '#6ee7ff';
+      ctx.stroke();
+    }
+  }
+}
+
+
+
+// Boot: load targets then start
+(async function boot(){
+  try {
+    const t = await fetchTargetsJson();
+    reconcileTargets(t);
+    start(); // auto-start once we have targets
+    scheduleTargetsReload();
+  } catch (err) {
+    console.error(err);
+    alert("Couldn't load targets.json — see console for details.");
+  }
+})();
+
+/* ================== Reload schedule ================== */
+function scheduleTargetsReload() {
+  if (reloadTimer) clearInterval(reloadTimer);
+  reloadTimer = setInterval(async () => {
+    try {
+      const t = await fetchTargetsJson();
+      reconcileTargets(t);
+    } catch (e) {
+      console.warn("Reload targets failed:", e);
+    }
+  }, RELOAD_MS);
+}
+
+/* ================== Probe loop ================== */
+function start() {
+  const good = +document.getElementById('goodMs').value || 500;
+  const warn = +document.getElementById('warnMs').value || 1000;
+  root.style.setProperty('--good', good);
+  root.style.setProperty('--warn', warn);
+
+  if (timer) clearInterval(timer);
+  runCycle();
+  timer = setInterval(runCycle, INTERVAL_MS);
+
+  document.getElementById('startBtn').disabled = true;
+  document.getElementById('stopBtn').disabled  = false;
+}
+function stop() {
+  if (timer) clearInterval(timer);
+  timer = null;
+  document.getElementById('startBtn').disabled = false;
+  document.getElementById('stopBtn').disabled  = true;
+}
+
+function runCycle() {
+  const currentUrls = targets.map(t => t.url); // snapshot
+  let pending = currentUrls.length;
+  if (pending === 0) {
+    document.getElementById('stamp').textContent = "Last updated: —";
+    return;
+  }
+  const done = () => {
+    if (--pending === 0) {
+      document.getElementById('stamp').textContent =
+        "Last updated: " + new Date().toLocaleString();
+    }
+  };
+  currentUrls.forEach(url => testOnce(state[url], TIMEOUT_MS, done));
+}
+
+function testOnce(s, timeoutMs, onDone) {
+  if (!s) { onDone && onDone(); return; }
+  const start = performance.now();
+  const img = new Image();
+
+  const to = setTimeout(() => {
+    s.last = null;
+    s.samples.push({ ts: Date.now(), ms: NaN }); // timeout marker
+    trimSamples(s); updateRow(s.url); onDone && onDone();
+  }, timeoutMs);
+
+  img.onload = img.onerror = () => {
+    clearTimeout(to);
+    const ms = Math.round(performance.now() - start);
+    s.last = ms;
+    s.samples.push({ ts: Date.now(), ms });
+    trimSamples(s); updateRow(s.url); onDone && onDone();
+  };
+
+  const sep = s.url.includes('?') ? '&' : '?';
+  img.src = `${s.url}${sep}t=${Date.now()}_${Math.random().toString(36).slice(2)}`;
+}
+
+function trimSamples(s) {
+  if (s.samples.length > MAX_SAMPLES) {
+    s.samples.splice(0, s.samples.length - MAX_SAMPLES);
+  }
+}
+
+/* ================== UI update ================== */
+function updateRow(url) {
+  const s = state[url];
+  const tr = tbody.querySelector(`tr[data-url="${css(url)}"]`);
+  if (!tr) return;
+
+  tr.querySelector('.last').textContent = (s.last ?? '—');
+
+  const nums = s.samples.map(x => x.ms).filter(Number.isFinite);
+  if (nums.length) {
+    tr.querySelector('.avg').textContent = Math.round(nums.reduce((a,b)=>a+b,0) / nums.length);
+    tr.querySelector('.min').textContent = Math.min(...nums);
+    tr.querySelector('.max').textContent = Math.max(...nums);
+    tr.querySelector('.jitter').textContent = calcJitter(nums);
+  }
+  tr.querySelector('.count').textContent = s.samples.length;
+
+  const { good, warn } = getThresholds();
+  const dot = tr.querySelector('.dot');
+  tr.classList.remove('good','warn','bad');
+  if (s.last == null) { tr.classList.add('bad'); dot.style.background = 'var(--red)'; }
+  else if (s.last <= good) { tr.classList.add('good'); dot.style.background = 'var(--green)'; }
+  else if (s.last <= warn) { tr.classList.add('warn'); dot.style.background = 'var(--yellow)'; }
+  else { tr.classList.add('bad'); dot.style.background = 'var(--red)'; }
+
+  drawSparkline(tr.querySelector('canvas.spark'), s.samples, { good, warn });
+}
+
+/* ================== Sparkline (autoscale to current max, min warn) ================== */
+function drawSparkline(canvas, samples, { good, warn }) {
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width = canvas.clientWidth;
+  const h = canvas.height = canvas.clientHeight;
+  ctx.clearRect(0, 0, w, h);
+
+  const finite = samples.map(s => s.ms).filter(Number.isFinite);
+  const maxSample = finite.length ? Math.max(...finite) : 0;
+  const maxY = Math.max(warn, maxSample * 1.05 || warn);
+  const yFor = (ms) => !Number.isFinite(ms) ? 0 : h - (Math.min(maxY, ms) / maxY) * h;
+
+  const yGood = yFor(good), yWarn = yFor(warn);
+  ctx.fillStyle = 'rgba(255,107,107,0.16)'; ctx.fillRect(0, 0, w, yWarn);
+  ctx.fillStyle = 'rgba(255,209,102,0.16)'; ctx.fillRect(0, yWarn, w, Math.max(0, yGood - yWarn));
+  ctx.fillStyle = 'rgba(0,229,139,0.16)';   ctx.fillRect(0, yGood, w, h - yGood);
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 1; ctx.setLineDash([3,3]);
+  ctx.beginPath(); ctx.moveTo(0, yGood+0.5); ctx.lineTo(w, yGood+0.5); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, yWarn+0.5); ctx.lineTo(w, yWarn+0.5); ctx.stroke();
+  ctx.setLineDash([]);
+
+  if (samples.length) {
+    ctx.beginPath();
+    samples.forEach((s,i) => {
+      const x = (i / Math.max(1, samples.length - 1)) * w;
+      const y = yFor(s.ms);
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+      ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--accent') || '#2563eb';
+      ctx.lineWidth = 1.8;
+      ctx.stroke();
+  }
+}
+
+/* ================== Large Sparkline for Modal (added) ================== */
+function drawLargeSparkline(canvas, samples, { good, warn }) {
+  if (!canvas) return;
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  const cssW = canvas.clientWidth || 900;
+  const cssH = canvas.clientHeight || 340;
+  canvas.width = Math.floor(cssW * dpr);
+  canvas.height = Math.floor(cssH * dpr);
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // scale for crisp lines
+
+  const w = cssW, h = cssH;
+  ctx.clearRect(0, 0, w, h);
+
+  const finite = samples.map(s => s.ms).filter(Number.isFinite);
+  const maxSample = finite.length ? Math.max(...finite) : 0;
+  const maxY = Math.max(warn, maxSample * 1.10 || warn); // a bit more headroom
+  const yFor = (ms) => !Number.isFinite(ms) ? 0 : h - (Math.min(maxY, ms) / maxY) * h;
+
+  const yGood = yFor(good), yWarn = yFor(warn);
+  // Bands
+  ctx.fillStyle = 'rgba(255,107,107,0.16)'; ctx.fillRect(0, 0, w, yWarn);
+  ctx.fillStyle = 'rgba(255,209,102,0.16)'; ctx.fillRect(0, yWarn, w, Math.max(0, yGood - yWarn));
+  ctx.fillStyle = 'rgba(0,229,139,0.16)';   ctx.fillRect(0, yGood, w, h - yGood);
+
+  // Threshold lines
+  ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+  ctx.setLineDash([6,4]);
+  ctx.beginPath(); ctx.moveTo(0, yGood); ctx.lineTo(w, yGood); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, yWarn); ctx.lineTo(w, yWarn); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Data line
+  if (samples.length) {
+    ctx.beginPath();
+    samples.forEach((s, i) => {
+      const x = (i / Math.max(1, samples.length - 1)) * w;
+      const y = yFor(s.ms);
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    ctx.strokeStyle = getComputedStyle(root).getPropertyValue('--accent') || '#6ee7ff';
+    ctx.lineWidth = 2.4;
+    ctx.shadowColor = 'rgba(110,231,255,0.3)';
+    ctx.shadowBlur = 6;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+}
+
+/* ================== Export ================== */
+function exportCSVAll() {
+  const rows = [['service','url','timestamp','latency_ms'].join(',')];
+  targets.forEach(t => {
+    const s = state[t.url];
+    (s?.samples || []).forEach(sample => {
+      const iso = new Date(sample.ts).toISOString();
+      const ms = Number.isFinite(sample.ms) ? sample.ms : '';
+      rows.push([csv(t.name), csv(t.url), iso, ms].join(','));
+    });
+  });
+  downloadCSV(rows.join('\n'), `latency-report-${stampNow()}.csv`);
+}
+function exportCSVOne(url) {
+  const s = state[url]; if (!s) return;
+  const rows = [['service','url','timestamp','latency_ms'].join(',')];
+  (s.samples || []).forEach(sample => {
+    const iso = new Date(sample.ts).toISOString();
+    const ms = Number.isFinite(sample.ms) ? sample.ms : '';
+    rows.push([csv(s.name), csv(s.url), iso, ms].join(','));
+  });
+  const safeName = s.name.replace(/[^a-z0-9]+/gi,'-').replace(/^-+|-+$/g,'').toLowerCase();
+  downloadCSV(rows.join('\n'), `latency-${safeName}-${stampNow()}.csv`);
+}
+function downloadCSV(csvText, filename) {
+  const blob = new Blob([csvText], { type: 'text/csv;charset=utf-8;' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+}
+
+/* ================== Utils ================== */
+function redrawAllSparklines() {
+  const { good, warn } = getThresholds();
+  // table sparklines
+  targets.forEach(t => {
+    const s = state[t.url];
+    const tr = tbody.querySelector(`tr[data-url="${css(t.url)}"]`);
+    const canvas = tr?.querySelector('canvas.spark');
+    if (canvas && s) drawSparkline(canvas, s.samples, { good, warn });
+  });
+  // if modal is open, re-render the big chart too
+  if (modal && modal.style.display !== 'none') {
+    renderModalChart();
+  }
+}
+function getThresholds() {
+  return {
+    good: +getComputedStyle(root).getPropertyValue('--good') || 500,
+    warn: +getComputedStyle(root).getPropertyValue('--warn') || 1000
+  };
+}
+function calcJitter(arr) {
+  if (arr.length < 2) return 0;
+  let sum = 0; for (let i = 1; i < arr.length; i++) sum += Math.abs(arr[i] - arr[i-1]);
+  return Math.round(sum / (arr.length - 1));
+}
+function css(s){return s.replace(/"/g,'\\"');}
+function escapeHtml(s){return s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function csv(s){return /[",\n]/.test(s)?`"${s.replace(/"/g,'""')}"`:s;}
+function stampNow(){return new Date().toISOString().replace(/[:T]/g,'-').slice(0,19);}
+</script>
+
+</body>
+</html>
