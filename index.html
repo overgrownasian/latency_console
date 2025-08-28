@@ -94,6 +94,7 @@
       <div class="buttons">
         <button id="startBtn">Start</button>
         <button id="stopBtn" disabled>Stop</button>
+        <button id="pngBtn">Download PNG</button>
         <button id="exportBtn">Export CSV (All)</button>
       </div>
     </div>
@@ -777,6 +778,23 @@ function css(s){return s.replace(/"/g,'\\"');}
 function escapeHtml(s){return s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function csv(s){return /[",\n]/.test(s)?`"${s.replace(/"/g,'""')}"`:s;}
 function stampNow(){return new Date().toISOString().replace(/[:T]/g,'-').slice(0,19);}
+</script>
+<script type="module">
+  import * as htmlToImage from "https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/+esm";
+
+  document.getElementById('pngBtn').onclick = async () => {
+    const scale = Math.max(2, window.devicePixelRatio || 1);
+    const dataUrl = await htmlToImage.toPng(document.body, {
+      pixelRatio: scale,
+      cacheBust: true,
+      backgroundColor: getComputedStyle(document.documentElement).getPropertyValue("--bg") || "#fff"
+    });
+
+    const a = document.createElement("a");
+    a.href = dataUrl;
+    a.download = `latency-console-${new Date().toISOString().replace(/[:.]/g,"-")}.png`;
+    a.click();
+  };
 </script>
 
 </body>
